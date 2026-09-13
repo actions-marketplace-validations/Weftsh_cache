@@ -1,0 +1,44 @@
+name: "Weft Cache: save"
+description: Save a cache to Weft without restoring one first. The save half of weftsh/cache.
+author: Weft
+branding:
+  icon: archive
+  color: gray-dark
+
+inputs:
+  path:
+    description: A list of files, directories, and wildcard patterns to cache
+    required: true
+  key:
+    description: An explicit key for saving the cache
+    required: true
+  upload-chunk-size:
+    description: >-
+      The chunk size used to split up large files during upload, in bytes.
+      Archives over 128 MiB are sent in blocks of this size; at most 128 MiB.
+    required: false
+  enableCrossOsArchive:
+    description: >-
+      An optional boolean when enabled, allows windows runners to save caches
+      that can be restored on other platforms
+    default: "false"
+    required: false
+  token:
+    description: >-
+      A Weft token with `repo:cache`. Sent as an Authorization header, never
+      in a URL. When empty the step does nothing, with a warning.
+    required: true
+  repository:
+    description: >-
+      The GitHub repository the cache belongs to, as `owner/name`. Defaults
+      to the repository the workflow runs in.
+    required: false
+    default: ${{ github.repository }}
+  api-url:
+    description: The Weft deployment.
+    required: false
+    default: https://api.weft.sh
+
+runs:
+  using: node20
+  main: ../dist/save-only/index.js

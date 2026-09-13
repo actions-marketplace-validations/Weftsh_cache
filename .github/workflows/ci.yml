@@ -1,0 +1,145 @@
+# The action's own gate.
+#
+# The suite, the build and the dist check run on Weft's hosted runners
+# (`runs-on: weft`), so every push here is a job on the fleet. The real
+# round trip runs on both kinds of runner on purpose: this action exists so
+# a GitHub-hosted runner can reach the same cache a Weft runner reaches, and
+# only a job on each side can prove that. `share` saves on ubuntu-latest
+# and restores on weft, and the other way round.
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "23 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: weft
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm test
+
+  dist:
+    # What is committed under dist/ is what the sources build to.
+    runs-on: weft
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: |
+          if ! git diff --quiet -- dist; then
+            echo "::error::dist/ is stale; run npm run build and commit it"
+            git diff --stat -- dist
+            exit 1
+          fi
+
+  roundtrip:
+    # Save, wipe, restore on one runner, through the sub-actions and the
+    # main action's post step.
+    strategy:
+      matrix:
+        runner: [ubuntu-latest, weft]
+    runs-on: ${{ matrix.runner }}
+    env:
+      KEY: ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Make something worth caching
+        run: |
+          mkdir -p out/deep
+          head -c 3000000 /dev/urandom > out/deep/blob
+          echo "$KEY" > out/marker
+          sha256sum out/deep/blob out/marker > expected.sha
+      - id: miss
+        uses: ./restore
+        with:
+          path: out
+          key: ${{ env.KEY }}
+          token: ${{ secrets.WEFT_TOKEN }}
+      - run: |
+          test "${{ steps.miss.outputs.cache-hit }}" != true
+          test "${{ steps.miss.outputs.cache-primary-key }}" = "$KEY"
+      - uses: ./save
+        with:
+          path: out
+          key: ${{ env.KEY }}
+          token: ${{ secrets.WEFT_TOKEN }}
+      - run: rm -rf out
+      - id: hit
+        uses: ./restore
+        with:
+          path: out
+          key: ${{ env.KEY }}
+          token: ${{ secrets.WEFT_TOKEN }}
+          fail-on-cache-miss: "true"
+      - run: |
+          test "${{ steps.hit.outputs.cache-hit }}" = true
+          test "${{ steps.hit.outputs.cache-matched-key }}" = "$KEY"
+          sha256sum -c expected.sha
+      - name: A restore-key prefix finds it and reports cache-hit false
+        id: prefix
+        uses: ./restore
+        with:
+          path: out
+          key: ${{ env.KEY }}-nope
+          restore-keys: ${{ env.KEY }}
+          token: ${{ secrets.WEFT_TOKEN }}
+          lookup-only: "true"
+      - run: |
+          test "${{ steps.prefix.outputs.cache-hit }}" = false
+          test "${{ steps.prefix.outputs.cache-matched-key }}" = "$KEY"
+      - name: The main action restores in main and saves in post
+        uses: ./
+        with:
+          path: out
+          key: ${{ env.KEY }}-main
+          token: ${{ secrets.WEFT_TOKEN }}
+      - name: A wrong token is a warning and a miss, not a failed job
+        id: refused
+        uses: ./restore
+        with:
+          path: out
+          key: ${{ env.KEY }}
+          token: wft_not_a_token
+      - run: test "${{ steps.refused.outputs.cache-hit }}" != true
+
+  share:
+    # The point of the action: a cache saved from a GitHub-hosted runner is
+    # a hit on a Weft runner, and the other way round.
+    needs: roundtrip
+    strategy:
+      matrix:
+        include:
+          - from: ubuntu-latest
+            to: weft
+          - from: weft
+            to: ubuntu-latest
+    runs-on: ${{ matrix.to }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: shared
+        uses: ./restore
+        with:
+          path: out
+          key: ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.from }}
+          token: ${{ secrets.WEFT_TOKEN }}
+          fail-on-cache-miss: "true"
+      - run: |
+          test "${{ steps.shared.outputs.cache-hit }}" = true
+          grep -qx "ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.from }}" out/marker
+          test "$(stat -c %s out/deep/blob)" = 3000000

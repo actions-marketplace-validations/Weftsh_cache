@@ -1,0 +1,29 @@
+{
+  "name": "weftsh-cache",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Cache dependencies and build outputs on Weft, from any runner",
+  "main": "dist/restore/index.js",
+  "scripts": {
+    "build": "tsc --noEmit && ncc build -m -o dist/restore src/restore.ts && ncc build -m -o dist/save src/save.ts && ncc build -m -o dist/restore-only src/restoreOnly.ts && ncc build -m -o dist/save-only src/saveOnly.ts",
+    "test": "tsc --noEmit && vitest run",
+    "check-dist": "npm run build && git diff --exit-code --stat -- dist"
+  },
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@actions/cache": "4.1.0",
+    "@actions/core": "^1.11.1",
+    "@actions/exec": "^1.1.1",
+    "@actions/http-client": "^2.2.3",
+    "@actions/io": "^1.1.3"
+  },
+  "devDependencies": {
+    "@types/node": "^20.17.0",
+    "@vercel/ncc": "^0.38.3",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  }
+}
